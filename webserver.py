@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import security
+from .compare import _label
 from .release import FILES
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -298,6 +299,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not security.guard(self, self.server.token):
                 return
+            parts = urlsplit(self.path)
+            if parts.path in ("/api/upload", "/api/release", "/api/question") and not self._local_only():
+                return
             if parts.path == "/api/question":
                 return self._add_question()
             if parts.path == "/api/upload":
@@ -327,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            if not security.guard(self, self.server.token):
+                return
             path = urlsplit(self.path).path
             if path == "/api/health":
                 return self._json(200, {"status": "ok", "service": "readyset-control-tower"})
@@ -517,13 +523,14 @@ def make_server(host="127.0.0.1", port=8010, findings=None, quiet=False, release
     httpd.findings_path = findings or EXAMPLE
     httpd.releases, httpd.lock, httpd.cache, httpd.memory = releases, threading.Lock(), {}, {}
     httpd.settings_path = settings
+    httpd.token = security.new_token()
     httpd.rows = {}
     httpd.staging = tempfile.mkdtemp(prefix="readyset-release-")
     atexit.register(shutil.rmtree, httpd.staging, True)
     httpd.available = {a.id: a.id for a in REGISTRY}
     httpd.titles = {a.id: a.title for a in REGISTRY}
     httpd.default_ids = list(httpd.available)
-    httpd.token = security.new_token()
+    httpd.question_specs = question
     if question:
         asked = [from_spec(q) for q in question]              # raises BadQuestion before the server starts
         for spec, a in zip(question, asked):
@@ -592,15 +599,16 @@ def main(argv):
         return 1
     remember(port=port)
     url = f"http://localhost:{port}"
-    print(f"ReadySet Control Tower is running at {url}   (Ctrl+C to stop)", flush=True)
+    page = f"{url}/?token={httpd.token}"
+    print(f"ReadySet Control Tower is running at {page}   (Ctrl+C to stop)", flush=True)
     if releases and all(releases):
         print(f"Comparing: {releases[0]}  with  {releases[1]}", flush=True)
     else:
         print(f"Showing: {os.path.relpath(httpd.findings_path)}", flush=True)
         if releases:
-    url = f"http://localhost:{port}"
-    page = f"{url}/?token={httpd.token}"
-    print(f"ReadySet Control Tower is running at {page}   (Ctrl+C to stop)", flush=True)
+            print(f"Trusted release: {releases[0]}. Drop a new release on the page to compare it.", flush=True)
+    if open_browser and host in ("127.0.0.1", "localhost"):
+        threading.Timer(0.4, webbrowser.open, args=(page,)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
