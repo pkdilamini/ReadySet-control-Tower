@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .compare import _label
+from . import security
 from .release import FILES
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,7 +52,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if self.command != "HEAD":
@@ -297,8 +296,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            parts = urlsplit(self.path)
-            if parts.path in ("/api/upload", "/api/release", "/api/question") and not self._local_only():
+            if not security.guard(self, self.server.token):
                 return
             if parts.path == "/api/question":
                 return self._add_question()
@@ -525,7 +523,7 @@ def make_server(host="127.0.0.1", port=8010, findings=None, quiet=False, release
     httpd.available = {a.id: a.id for a in REGISTRY}
     httpd.titles = {a.id: a.title for a in REGISTRY}
     httpd.default_ids = list(httpd.available)
-    httpd.question_specs = question
+    httpd.token = security.new_token()
     if question:
         asked = [from_spec(q) for q in question]              # raises BadQuestion before the server starts
         for spec, a in zip(question, asked):
@@ -600,9 +598,9 @@ def main(argv):
     else:
         print(f"Showing: {os.path.relpath(httpd.findings_path)}", flush=True)
         if releases:
-            print(f"Trusted release: {releases[0]}. Drop a new release on the page to compare it.", flush=True)
-    if open_browser and host in ("127.0.0.1", "localhost"):
-        threading.Timer(0.4, webbrowser.open, args=(url,)).start()
+    url = f"http://localhost:{port}"
+    page = f"{url}/?token={httpd.token}"
+    print(f"ReadySet Control Tower is running at {page}   (Ctrl+C to stop)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
